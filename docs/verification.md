@@ -35,6 +35,16 @@ Screenshots in the local ignored `artifacts/` folder show the workspace and veri
 - Fresh installation on macOS, the D5100's connection/Enter suffix on that MacBook, or physical-scanner behavior in this app.
 - Cross-machine concurrency, external collaborator edits, or operational performance at the stated row limit. These remain outside the single-writer prototype's guarantees.
 
+## Live staging follow-up — October 14, 2026
+
+The original live migration encountered a formula error after its write. Inspection confirmed that all three staging tabs existed, but two Current Count formulas reported `N_A: Argument must be a range`. The initial batch interleaved tab creation and formula writes, referencing the transaction tab before its creation. Migration now creates all tabs first. Validation also accepts Google's canonical omission of unnecessary sheet-name quotes.
+
+With the user confirming the app was stopped, the repair checked the approved backup fingerprint, original tab contents, both staged products and opening counts, provenance metadata, empty staged ledger, and empty local withdrawal journal. Only the two Current Count formulas were rewritten. Subsequent Google reads verified both calculated balances against the approved opening counts, an empty ledger, and unchanged original tabs. Repair evidence is stored in the ignored `.state/migrations/` folder.
+
+All **47 tests passed** on the installed Python 3.14 after the credential, connection-message, and migration fixes. Tests include formula-write ordering, Google formula canonicalization, and rejection of repairs with altered baseline data or existing transactions.
+
+This follow-up supersedes the original build's unverified migration status above. Live withdrawal/adjustment writes, capacity expansion, physical-scanner testing, and MacBook installation remain unverified.
+
 ## Live acceptance checklist
 
 After following README setup and approving a reconciled baseline:

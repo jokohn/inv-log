@@ -67,7 +67,9 @@ def prepare_legacy(data, spreadsheet_id, inventory_tab="Inventory", transaction_
 def stage_requests(config, products, existing_ids, provenance):
     data = workbook(config, products)
     next_id = max(existing_ids, default=0) + 1
-    requests = []
+    # Google resolves references when each request is processed. Create every
+    # target tab before installing any cross-tab formulas in the same batch.
+    creates, writes = [], []
     for offset, sheet in enumerate(data["sheets"]):
         props = sheet["properties"]
         props["sheetId"] = next_id + offset
@@ -77,14 +79,14 @@ def stage_requests(config, products, existing_ids, provenance):
             sheet["data"][0]["rowData"].extend(typed_rows([["baseline_sha256", provenance],
                 ["cutover_utc", datetime.now(timezone.utc).isoformat()],
                 ["baseline_source", "Approved reconciled legacy counts; legacy history excluded"]]))
-        requests.extend([
-            {"addSheet": {"properties": props}},
+        creates.append({"addSheet": {"properties": props}})
+        writes.extend([
             {"updateCells": {"start": {"sheetId": props["sheetId"], "rowIndex": 0, "columnIndex": 0},
                              "rows": sheet["data"][0]["rowData"], "fields": "userEnteredValue"}},
             {"addProtectedRange": {"protectedRange": {"range": {"sheetId": props["sheetId"]},
                 "description": "inv_flow managed schema: use controlled maintenance only", "warningOnly": True}}},
         ])
-    return requests
+    return creates + writes
 
 
 def durable_json(path, data):

@@ -12,7 +12,7 @@ from .config import Config
 from .demo import DemoService
 from .inventory import Inventory
 from .recovery import Journal
-from .sheets import Problem, Sheets, google_service
+from .sheets import Problem, Sheets, google_service, connection_error
 
 
 def create_app(config=None, service=None):
@@ -73,7 +73,7 @@ def create_app(config=None, service=None):
             base["connected"] = True
         except Exception as exc:
             base.update(connected=False, products=[], recent=inv.journal.recent(), pending=inv.pending(),
-                        error=str(exc) if isinstance(exc, Problem) else "Could not read the workbook. Check credentials, sharing, connection, and schema.")
+                        error=connection_error(exc))
         if request_id:
             record = inv.journal.get(request_id)
             import json

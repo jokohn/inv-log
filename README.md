@@ -51,6 +51,20 @@ One scan means one catalog unit. The scanner beep confirms capture only. The rec
 
 Keys are read only by the local Python backend and never sent to the browser. `.env`, local state, and credential filename patterns are ignored by Git. Do not put secrets elsewhere in the source folder or distribute `.state` or `.venv` with the code.
 
+### Wrong credential file: missing client_email / token_uri
+
+This app requires a **service-account JSON key**, not an API key or an OAuth client configuration (those often have an `installed` or `web` object). Do not add the missing fields manually.
+
+In Google Cloud Console, open **IAM & Admin → Service Accounts → your service account → Keys → Add key → Create new key → JSON**. Store the downloaded file outside the project. Share the target spreadsheet with that service account's email as Editor. See [Google's key creation instructions](https://docs.cloud.google.com/iam/docs/keys-create-delete).
+
+On this Windows device, set the path in `.env` using forward slashes, for example:
+
+```dotenv
+INV_CREDENTIALS=C:/Users/jkohn/.config/inv-flow/service-account.json
+```
+
+Use the actual location where you saved the downloaded key, then restart `python -m app`. Credential loading happens before any Google request; this particular error does not indicate a Sheets sharing or API-enablement problem. Connection and schema checks still follow successful credential loading.
+
 ## Migration: inspection first, explicit staging second
 
 Stop the app and all old writers. Establish an exclusive maintenance window. The utility supports the exact legacy `Inventory`/`Transactions` headers documented in the architecture plan. It rejects malformed counts, numeric or duplicate UPCs, unexpected occupied columns, and malformed history. If existing numeric UPCs have lost zeros, repair from a reliable source; do not guess them.
@@ -74,6 +88,19 @@ python -m scripts.migrate --backup .state/migrations/baseline.json \
 Staging adds `Inventory_v1`, `Transactions_v1`, and `InvFlow_v1` atomically and verifies every new balance. It leaves original tabs intact. Current reconciled balances become Opening Counts; the old history stays exclusively in the original tabs and is **not replayed**. Stable IDs are generated once, UPCs remain strings, and balances use bounded formulas. New tabs have warning protections against casual edits; these are not access restrictions. For stricter protection, restrict editors manually while retaining service-account access.
 
 The staging utility records dispatch intent beside the backup and refuses to overwrite that marker or existing target tabs. If staging times out, inspect Google for all three staging tabs and compare every balance before any further action. Do not remove the marker and blindly retry. No automatic migration recovery is claimed.
+
+### Recover the initial staging formula error
+
+The initial migration implementation wrote formulas before creating the transaction tab they referenced. Google could save those formulas with `#N/A: Argument must be a range`. The fixed migration creates all target tabs before writing any formulas, and balance validation accepts Google's removal of optional quotes around simple tab names.
+
+If staging already created the tabs, **do not rerun `--stage` or delete the intent marker**. Stop the app and all other editors. The narrowly scoped repair below checks the verified backup, migration provenance, unchanged original tabs, exact staged product data/opening counts, empty new ledger, and absence of withdrawal activity in the journal:
+
+```sh
+python -m scripts.repair_migration --backup .state/migrations/baseline.json
+python -m scripts.repair_migration --backup .state/migrations/baseline.json --apply
+```
+
+The first command is read-only to Google. The second rewrites only the original staged balance formulas, saves local repair evidence, and reads back every balance against the approved baseline. It refuses changed data or any existing withdrawal activity. It is not a general-purpose repair for transaction recovery.
 
 Document the cutover time, backup fingerprint, and product-ID mapping from the staged catalog. Configure the new tabs only after verification and discontinue the legacy Markdown write workflow. Before new transactions exist, retain the original tabs for rollback. After new activity, reconcile it before changing configuration; never discard new history.
 

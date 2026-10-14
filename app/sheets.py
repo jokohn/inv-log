@@ -21,6 +21,31 @@ class DefinitiveRejection(Exception):
     pass
 
 
+def connection_error(exc):
+    """Actionable status text without exposing raw provider responses or tokens."""
+    if isinstance(exc, Problem):
+        return str(exc)
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status == 403:
+        import json
+        try:
+            error = json.loads(exc.content).get("error", {})
+            disabled = any(d.get("reason") == "SERVICE_DISABLED" for d in error.get("details", [])) or any(
+                d.get("reason") == "accessNotConfigured" for d in error.get("errors", []))
+        except (ValueError, TypeError, AttributeError):
+            disabled = False
+        if disabled:
+            return "Google Sheets API is disabled for the credential's project. Enable it in Google Cloud, then Refresh."
+        return "Google denied access to this spreadsheet (403). Confirm INV_SPREADSHEET_ID and share that exact Google Sheet with the service account's client_email as Editor, then Refresh. Organization sharing restrictions may require your administrator."
+    if status == 404:
+        return "Google could not find or access the configured spreadsheet (404). Check INV_SPREADSHEET_ID and service-account sharing."
+    if status == 401:
+        return "Google rejected authentication (401). Check the service-account key and restart the app."
+    if status == 429:
+        return "Google's request limit was reached. Wait briefly, then Refresh."
+    return "Could not read the workbook. Check the network and credentials, or run python -m scripts.check_connection for a read-only diagnosis."
+
+
 def quote(tab):
     return "'" + tab.replace("'", "''") + "'"
 
@@ -28,6 +53,16 @@ def quote(tab):
 def formula(row, capacity, transactions_tab):
     tab = quote(transactions_tab)
     return f"=E{row}+SUMIF({tab}!$C$2:$C${capacity},A{row},{tab}!$G$2:$G${capacity})"
+
+
+def formula_matches(actual, row, capacity, transactions_tab):
+    expected = formula(row, capacity, transactions_tab)
+    allowed = {expected}
+    # Sheets canonicalizes simple sheet names by removing optional quotes.
+    # Accept only this exact equivalent, not arbitrary rewritten expressions.
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", transactions_tab):
+        allowed.add(expected.replace(quote(transactions_tab) + "!", transactions_tab + "!"))
+    return actual in allowed
 
 
 def cell(value):
@@ -114,7 +149,7 @@ class Sheets:
                 raise Problem("Unsupported counting model; schema v1 requires whole catalog units.", 503)
             opening, current = integer(opening, "Opening count", 0), integer(current, "Current count", 0)
             actual_formula = row.get("values", [{}] * 6)[5].get("userEnteredValue", {}).get("formulaValue")
-            if actual_formula != formula(row_number, capacity, cfg.transactions_tab):
+            if not formula_matches(actual_formula, row_number, capacity, cfg.transactions_tab):
                 raise Problem(f"Balance formula for {name} is missing or has incorrect coverage.", 503)
             products[pid] = dict(id=pid, name=name, unit=unit, upc=upc, opening=opening, count=current, row=row_number)
             upcs.add(upc)
@@ -193,13 +228,32 @@ class Sheets:
             raise
 
 
+def load_service_account_credentials(filename):
+    """Validate credential kind locally without printing credential values."""
+    import json
+    from pathlib import Path
+    from google.oauth2.service_account import Credentials
+    try:
+        info = json.loads(Path(filename).expanduser().read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        raise Problem("INV_CREDENTIALS must point to a readable service-account JSON key file. See README: Connect Google Sheets.", 503) from None
+    if isinstance(info, dict) and ("installed" in info or "web" in info):
+        raise Problem("INV_CREDENTIALS points to an OAuth client configuration. This app requires a service-account JSON key: Google Cloud > IAM & Admin > Service Accounts > select account > Keys > Add key > Create new key > JSON. Update INV_CREDENTIALS to that downloaded file; do not edit the OAuth file to add missing fields.", 503)
+    if not isinstance(info, dict) or info.get("type") != "service_account" or not all(
+        isinstance(info.get(key), str) and info[key] for key in ("client_email", "token_uri", "private_key")
+    ):
+        raise Problem("INV_CREDENTIALS is not a complete service-account JSON key. Download the JSON key from the service account's Keys tab. An API key or OAuth client file cannot be used here.", 503)
+    try:
+        return Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    except (ValueError, TypeError):
+        raise Problem("The service-account key could not be loaded. Use the original downloaded JSON file, without modifying its contents.", 503) from None
+
+
 def google_service(config):
     import httplib2
-    from google.oauth2.service_account import Credentials
     from google_auth_httplib2 import AuthorizedHttp
     from googleapiclient.discovery import build
-    credentials = Credentials.from_service_account_file(config.credentials,
-        scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    credentials = load_service_account_credentials(config.credentials)
     # Authentication retries must not silently replay a mutation.
     transport = AuthorizedHttp(credentials, http=httplib2.Http(timeout=20), max_refresh_attempts=0)
     return build("sheets", "v4", http=transport, cache_discovery=False, static_discovery=True)
