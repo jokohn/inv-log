@@ -1,14 +1,21 @@
 /* Browser drafts are advisory. The server revalidates and owns submitted recovery. */
 const $ = (id) => document.getElementById(id);
-let state = null, draft = {lines: [], request_id: null, phase: 'draft'}, busy = false, storageKey;
+let state = null, draft = {lines: [], request_id: null, phase: 'draft', movement_type:'withdrawal'}, busy = false, storageKey, invalidDraft = false;
+function movement(value) {
+  if (!Object.hasOwn(value, 'movement_type')) return 'withdrawal';
+  if (!['withdrawal', 'receiving'].includes(value.movement_type)) throw new Error('Unknown saved movement type. Resolve the saved draft before continuing.');
+  return value.movement_type;
+}
+const receiving = () => movement(draft) === 'receiving';
+const sign = (value) => movement(value) === 'receiving' ? '+' : '−';
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const product = (id) => state?.products.find(p => p.id === id);
-const isLocked = () => busy || draft.phase === 'sending' || Boolean(state?.pending.length);
+const isLocked = () => invalidDraft || busy || draft.phase === 'sending' || Boolean(state?.pending.length);
 const total = () => draft.lines.reduce((sum, l) => sum + l.quantity, 0);
 function alertMessage(message) { $('alert').textContent = message || ''; $('alert').hidden = !message; }
 function persist() {
   try { localStorage.setItem(storageKey, JSON.stringify(draft)); }
-  catch { alertMessage('Browser draft storage is unavailable. Keep this tab open until the withdrawal is verified.'); }
+  catch { alertMessage('Browser draft storage is unavailable. Keep this tab open until the stock movement is verified.'); }
 }
 function changed() { draft.request_id = crypto.randomUUID(); draft.phase = 'draft'; persist(); render(); }
 function feedback(title, detail, error = false) {
@@ -27,6 +34,10 @@ function scan(upc) {
     feedback(matches.length ? 'Barcode has multiple matches' : 'Barcode not recognized', 'Check the exact barcode and catalog. Nothing was added.', true);
   } else {
     const p = matches[0], line = draft.lines.find(l => l.product_id === p.id);
+    if (line?.quantity >= 1000000 || (!line && draft.lines.length >= 200)) {
+      feedback('Basket limit reached', 'Use at most 200 products and 1,000,000 units per product.', true);
+      $('barcode').value = ''; $('barcode').focus(); return;
+    }
     if (line) line.quantity++; else draft.lines.push({product_id:p.id, quantity:1});
     changed();
     feedback(`${p.name} added`, `${p.unit} · ${p.count} available · ${line ? line.quantity : 1} in basket`);
@@ -36,21 +47,24 @@ function scan(upc) {
 }
 function render() {
   const locked = isLocked();
+  $('movement-type').value = draft.movement_type;
+  $('movement-type').disabled = locked || Boolean(draft.lines.length);
+  $('total-label').textContent = receiving() ? 'Total receiving' : 'Total withdrawal';
   document.body.classList.toggle('busy', busy);
   $('barcode').disabled = locked || !state?.connected;
   $('scan-form').querySelector('button').disabled = $('barcode').disabled;
   $('item-count').textContent = `${draft.lines.length} product${draft.lines.length === 1 ? '' : 's'}`;
   $('total').textContent = total();
   $('record').disabled = locked || !state?.connected || !draft.lines.length;
-  $('record').innerHTML = busy ? 'Verifying withdrawal… <span>◷</span>' : locked ? 'Waiting for verification <span>◷</span>' : 'Record withdrawal <span>↗</span>';
+  $('record').textContent = busy ? 'Verifying stock movement…' : locked ? 'Waiting for verification' : receiving() ? 'Receive stock +' : 'Record withdrawal ↗';
   $('basket').innerHTML = draft.lines.length ? draft.lines.map(l => {
     const p = product(l.product_id);
-    return `<div class="basket-line"><div class="product-details"><strong>${esc(p?.name || l.product_id)}</strong><p>${esc(p?.unit || 'Unavailable product')}</p><span class="stock ${p && p.count < l.quantity ? 'low' : ''}">${p ? `${p.count} available${p.count < l.quantity ? ' · exceeds stock' : ''}` : 'Refresh catalog before saving'}</span></div><div class="qty-controls"><div class="qty-box"><button data-action="minus" data-id="${esc(l.product_id)}" aria-label="Decrease ${esc(p?.name || l.product_id)}" ${locked?'disabled':''}>−</button><input aria-label="Quantity for ${esc(p?.name || l.product_id)}" type="number" min="1" max="1000000" step="1" value="${l.quantity}" data-id="${esc(l.product_id)}" ${locked?'disabled':''}><button data-action="plus" data-id="${esc(l.product_id)}" aria-label="Increase ${esc(p?.name || l.product_id)}" ${locked?'disabled':''}>+</button></div><button class="remove" data-action="remove" data-id="${esc(l.product_id)}" aria-label="Remove ${esc(p?.name || l.product_id)}" ${locked?'disabled':''}>×</button></div></div>`;
-  }).join('') : '<div class="basket-empty"><div class="basket-symbol">▱</div><strong>Your basket is waiting</strong><p>Scan an item to start your next withdrawal.</p></div>';
+    return `<div class="basket-line"><div class="product-details"><strong>${esc(p?.name || l.product_id)}</strong><p>${esc(p?.unit || 'Unavailable product')}</p><span class="stock ${p && !receiving() && p.count < l.quantity ? 'low' : ''}">${p ? `${p.count} available${!receiving() && p.count < l.quantity ? ' · exceeds stock' : ''}` : 'Refresh catalog before saving'}</span></div><div class="qty-controls"><div class="qty-box"><button data-action="minus" data-id="${esc(l.product_id)}" aria-label="Decrease ${esc(p?.name || l.product_id)}" ${locked?'disabled':''}>−</button><input aria-label="Quantity for ${esc(p?.name || l.product_id)}" type="number" min="1" max="1000000" step="1" value="${l.quantity}" data-id="${esc(l.product_id)}" ${locked?'disabled':''}><button data-action="plus" data-id="${esc(l.product_id)}" aria-label="Increase ${esc(p?.name || l.product_id)}" ${locked?'disabled':''}>+</button></div><button class="remove" data-action="remove" data-id="${esc(l.product_id)}" aria-label="Remove ${esc(p?.name || l.product_id)}" ${locked?'disabled':''}>×</button></div></div>`;
+  }).join('') : '<div class="basket-empty"><div class="basket-symbol">▱</div><strong>Your basket is waiting</strong><p>Scan an item to start your next stock movement.</p></div>';
   $('recovery-panel').hidden = !(draft.phase === 'sending' || state?.pending.length);
   $('recovery-id').textContent = state?.pending[0]?.request_id || (draft.phase === 'sending' ? draft.request_id : '') || '';
   $('recover').disabled = busy;
-  $('recent').innerHTML = state?.recent.length ? state.recent.map(r => `<div class="recent-row"><span class="recent-check">✓</span><div><strong>${esc(r.lines.map(l => l.name).join(', '))}</strong><small>${esc(new Date(r.timestamp).toLocaleString('en-US', {timeZone:'America/Chicago', month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))} · Chicago · Verified</small></div><span>−${r.total_units}</span></div>`).join('') : '<div class="empty-activity"><span>◷</span><p>No withdrawals recorded yet.<br><small>Verified saves will appear here.</small></p></div>';
+  $('recent').innerHTML = state?.recent.length ? state.recent.map(r => `<div class="recent-row"><span class="recent-check">✓</span><div><strong>${esc(r.lines.map(l => l.name).join(', '))}</strong><small>${esc(new Date(r.timestamp).toLocaleString('en-US', {timeZone:'America/Chicago', month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))} · Chicago · ${movement(r) === 'receiving' ? 'Received' : 'Withdrawn'} · Verified</small></div><span>${sign(r)}${r.total_units}</span></div>`).join('') : '<div class="empty-activity"><span>◷</span><p>No stock movements recorded yet.<br><small>Verified saves will appear here.</small></p></div>';
   focusStatus();
 }
 async function api(path, body) {
@@ -68,8 +82,19 @@ async function refresh(initial = false) {
       storageKey = 'inv_flow:draft:' + state.identity;
       try {
         const saved = JSON.parse(localStorage.getItem(storageKey));
-        if (saved && Array.isArray(saved.lines) && saved.lines.every(l => typeof l.product_id === 'string' && Number.isInteger(l.quantity) && l.quantity > 0)) draft = saved;
-      } catch { alertMessage('Saved browser draft could not be read. Check recovery before starting another withdrawal.'); }
+        if (saved !== null) {
+          if (!saved || !Array.isArray(saved.lines) || !saved.lines.every(l => l && typeof l.product_id === 'string' && Number.isInteger(l.quantity) && l.quantity > 0)) {
+            throw new Error('Saved browser draft could not be read. Resolve it before continuing.');
+          }
+          draft = saved;
+        }
+        draft.movement_type = movement(draft);
+      } catch (error) {
+        invalidDraft = true;
+        // Preserve unreadable saved work and pause both modes instead of guessing its direction.
+        draft = {lines:[], request_id:null, phase:'draft', movement_type:'withdrawal'};
+        alertMessage(error.message || 'Saved browser draft could not be read. Resolve it before continuing.');
+      }
       if (draft.request_id) { await refresh(); if (!isLocked()) $('barcode').focus(); return; }
     }
     if (draft.phase === 'sending' && state.request?.state === 'verified') {
@@ -78,8 +103,8 @@ async function refresh(initial = false) {
       draft.phase = 'draft'; persist();
       alertMessage('The previous write was rejected. Review the retained basket and try again after resolving the cause.');
     }
-    if (state.pending.length && !draft.lines.length) {
-      draft = {...state.pending[0], phase:'sending'}; persist();
+    if (!invalidDraft && state.pending.length && (!draft.lines.length || state.pending[0].request_id === draft.request_id)) {
+      draft = {...state.pending[0], movement_type:movement(state.pending[0]), phase:'sending'}; persist();
     }
     $('mode').textContent = state.mode === 'demo' ? 'DEMO MODE' : 'GOOGLE SHEETS';
     $('device').textContent = state.device;
@@ -97,10 +122,11 @@ async function refresh(initial = false) {
   }
 }
 function complete(receipt) {
-  draft = {lines:[], request_id:null, phase:'draft'}; persist();
+  const kind = movement(receipt);
+  draft = {lines:[], request_id:null, phase:'draft', movement_type:kind}; persist();
   alertMessage('');
-  $('receipt-summary').textContent = `${receipt.total_units} units recorded${state.mode === 'demo' ? ' in the local demo' : ' in Google Sheets'}. Transaction rows and balances verified.`;
-  $('receipt-lines').innerHTML = receipt.lines.map(l => `<div class="receipt-item"><div>${esc(l.name)}<small>${esc(l.unit)} · ${l.remaining} remaining</small></div><strong>−${l.quantity}</strong></div>`).join('');
+  $('receipt-summary').textContent = `${receipt.total_units} unit${receipt.total_units === 1 ? '' : 's'} ${kind === 'receiving' ? 'received' : 'withdrawn'}${state.mode === 'demo' ? ' in the local demo' : ' in Google Sheets'}. Transaction rows and balances verified.`;
+  $('receipt-lines').innerHTML = receipt.lines.map(l => `<div class="receipt-item"><div>${esc(l.name)}<small>${esc(l.unit)} · ${l.remaining} in stock</small></div><strong>${sign(receipt)}${l.quantity}</strong></div>`).join('');
   $('receipt-reference').textContent = 'Request ' + receipt.request_id;
   if (!$('receipt').open) $('receipt').showModal();
 }
@@ -118,7 +144,7 @@ async function submit() {
   draft.phase = 'sending';
   persist(); render(); alertMessage('');
   try {
-    const receipt = await api('/api/withdrawals', {request_id:draft.request_id, lines:draft.lines});
+    const receipt = await api(receiving() ? '/api/receiving' : '/api/withdrawals', {request_id:draft.request_id, lines:draft.lines, movement_type:draft.movement_type});
     complete(receipt);
   } catch (error) {
     // Only known validation/rejection returns the basket to editing. Unknown outcomes stay locked.
@@ -148,6 +174,11 @@ $('basket').addEventListener('input', e => {
   alertMessage(''); $('total').textContent = total(); $('record').disabled = !state?.connected;
 });
 $('record').addEventListener('click', submit);
+$('movement-type').addEventListener('change', e => {
+  if (isLocked() || draft.lines.length) { render(); return; }
+  draft.movement_type = movement({movement_type:e.target.value});
+  changed(); alertMessage(''); $('barcode').focus();
+});
 $('toggle-demo').addEventListener('click', () => {
   $('demo-catalog').hidden = !$('demo-catalog').hidden;
   $('toggle-demo').textContent = $('demo-catalog').hidden ? 'Show demo barcodes ↗' : 'Hide demo barcodes ↗';

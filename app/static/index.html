@@ -2,30 +2,31 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Inventory Flow · Storeroom</title><link rel="stylesheet" href="/static/styles.css"><script src="/static/app.js" defer></script></head>
 <body>
-  <aside class="rail"><a href="/" class="brand" aria-label="Inventory Flow home"><span class="brand-mark">if<span>↗</span></span></a><div class="rail-label">INVENTORY<br>FLOW</div><div class="rail-active" aria-label="Withdrawal workspace">▤</div><span class="rail-bottom">LOCAL<br>WORKSPACE</span></aside>
+  <aside class="rail"><a href="/" class="brand" aria-label="Inventory Flow home"><span class="brand-mark">if<span>↗</span></span></a><div class="rail-label">INVENTORY<br>FLOW</div><div class="rail-active" aria-label="Stock movement workspace">▤</div><span class="rail-bottom">LOCAL<br>WORKSPACE</span></aside>
   <main>
     <header><div class="breadcrumb">OPERATIONS <span>/</span> STOREROOM</div><div class="header-meta"><span id="mode" class="pill">CONNECTING</span><span id="connection">Checking connection…</span></div></header>
-    <section class="page-heading"><div><p class="eyebrow">EVERY UNIT, ACCOUNTED FOR.</p><h1>Storeroom withdrawals<span>.</span></h1><p class="subtitle">Scan your items. Review the basket. Keep stock in sync.</p></div><div class="device"><span class="device-icon">▱</span><div><small>CAPTURE STATION</small><strong id="device">Local laptop</strong></div></div></section>
+    <section class="page-heading"><div><p class="eyebrow">EVERY UNIT, ACCOUNTED FOR.</p><h1>Storeroom inventory<span>.</span></h1><p class="subtitle">Scan your items. Review the basket. Keep stock in sync.</p></div><div class="device"><span class="device-icon">▱</span><div><small>CAPTURE STATION</small><strong id="device">Local laptop</strong></div></div></section>
     <div id="demo-banner" class="demo-banner" hidden><span class="banner-icon">◈</span><p><strong>A safe space to try the flow.</strong> Demo inventory only. Your Google Sheet is not connected.</p><button id="toggle-demo" class="text-button">Show demo barcodes ↗</button></div>
     <div id="alert" role="alert" hidden></div>
-    <div id="recovery-panel" class="recovery-panel" hidden><div><strong>Withdrawal needs verification</strong><p id="recovery-message">Saving is paused while the previous result is checked.</p><code id="recovery-id"></code></div><button id="recover" class="secondary">Check recovery</button></div>
+    <div id="recovery-panel" class="recovery-panel" hidden><div><strong>Stock movement needs verification</strong><p id="recovery-message">Saving is paused while the previous result is checked.</p><code id="recovery-id"></code></div><button id="recover" class="secondary">Check recovery</button></div>
+    <div class="movement-selector"><label for="movement-type">Stock movement</label><select id="movement-type" aria-describedby="movement-help"><option value="withdrawal">Withdraw stock</option><option value="receiving">Receive stock</option></select><p id="movement-help">Choose before scanning. Switching requires an empty basket and no unresolved save.</p></div>
     <div class="workspace">
       <section class="capture-column">
         <article class="card scan-card"><div class="section-heading"><h2><span class="step">01</span> Capture items</h2><span id="focus-status" class="focus-status">Not focused</span></div>
           <p class="muted">One scan adds one bottle, can, or catalog unit.</p>
           <form id="scan-form" autocomplete="off"><label for="barcode">Barcode</label><div class="scan-input"><span class="barcode-icon" aria-hidden="true">▏▎▍▏▎▏</span><input id="barcode" type="text" inputmode="text" placeholder="Scan or enter a barcode" spellcheck="false" autocomplete="off" aria-describedby="scan-help"><button aria-label="Add scanned barcode" type="submit">↵</button></div><p id="scan-help">Press Enter to add · Leading zeros are preserved</p></form>
           <div id="scan-feedback" class="scan-feedback" role="status"><span class="feedback-symbol">⌁</span><div><strong>Ready for the next item</strong><p>Click the field above and scan to begin.</p></div></div>
-          <div class="workflow-hint"><span>↳</span><p>Taking more than one? Scan again or change the quantity in your basket.</p></div>
+          <div class="workflow-hint"><span>↳</span><p>Moving more than one? Scan again or change the quantity in your basket.</p></div>
         </article>
         <article id="demo-catalog" class="card catalog" hidden><div class="section-heading"><h2>Try a demo scan</h2><span class="small-tag">SAMPLE DATA</span></div><p class="muted">Choose a product to simulate its exact barcode.</p><div id="catalog-items"></div></article>
-        <article class="card activity"><div class="section-heading"><h2>Recent withdrawals</h2><button id="refresh" class="text-button">Refresh ↻</button></div><div id="recent"><div class="empty-activity"><span>◷</span><p>No withdrawals recorded yet.<br><small>Verified saves will appear here.</small></p></div></div></article>
+        <article class="card activity"><div class="section-heading"><h2>Recent stock movements</h2><button id="refresh" class="text-button">Refresh ↻</button></div><div id="recent"><div class="empty-activity"><span>◷</span><p>No stock movements recorded yet.<br><small>Verified saves will appear here.</small></p></div></div></article>
       </section>
       <section class="card basket-card"><div class="section-heading"><h2><span class="step">02</span> Review basket</h2><span id="item-count" class="count-pill">0 products</span></div><p class="muted basket-intro">Stock changes only after a verified save.</p>
         <div class="basket-labels"><span>PRODUCT / AVAILABLE</span><span>QUANTITY</span></div><div id="basket"></div>
-        <div class="basket-footer"><div class="total-line"><span>Total withdrawal</span><strong><span id="total">0</span> <small>units</small></strong></div><button id="record" class="primary" disabled>Record withdrawal <span>↗</span></button><p id="save-help"><span>▣</span> Every save checks live stock and verifies the result.</p></div>
+        <div class="basket-footer"><div class="total-line"><span id="total-label">Total withdrawal</span><strong><span id="total">0</span> <small>units</small></strong></div><button id="record" class="primary" disabled>Record withdrawal <span>↗</span></button><p id="save-help"><span>▣</span> Every save checks live stock and verifies the result.</p></div>
       </section>
     </div>
     <footer><span><span class="tiny-dot"></span> One stock pool · One capture station</span><span>Inventory Flow <span class="footer-divider">/</span> Prototype 01</span></footer>
   </main>
-  <dialog id="receipt"><button id="close-receipt" class="dialog-close" aria-label="Close receipt">×</button><div class="receipt-check">✓</div><p class="eyebrow">VERIFIED & RECORDED</p><h2>All accounted for.</h2><p id="receipt-summary"></p><div id="receipt-lines"></div><p class="receipt-note" id="receipt-reference"></p><button id="next-basket" class="primary">Start next withdrawal →</button></dialog>
+  <dialog id="receipt"><button id="close-receipt" class="dialog-close" aria-label="Close receipt">×</button><div class="receipt-check">✓</div><p class="eyebrow">VERIFIED & RECORDED</p><h2>All accounted for.</h2><p id="receipt-summary"></p><div id="receipt-lines"></div><p class="receipt-note" id="receipt-reference"></p><button id="next-basket" class="primary">Start next basket →</button></dialog>
 </body></html>

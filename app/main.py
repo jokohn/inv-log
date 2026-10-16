@@ -88,6 +88,10 @@ def create_app(config=None, service=None):
     def recover(request: Request):
         return {"pending": request.app.state.inventory.recover()}
 
+    @app.post("/api/receiving")
+    def receive(request: Request, body: dict):
+        return request.app.state.inventory.submit(body, "receiving")
+
     static = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static), name="static")
 

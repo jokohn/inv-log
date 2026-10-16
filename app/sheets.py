@@ -179,10 +179,12 @@ class Sheets:
             if unit != products[pid]["unit"]:
                 raise Problem("Historical counting unit differs from the catalog.", 503)
             change = integer(change, "Unit change")
-            if kind not in {"withdrawal", "adjustment"} or change == 0:
+            if kind not in {"withdrawal", "receiving", "adjustment"} or change == 0:
                 raise Problem("Invalid transaction type or zero unit change.", 503)
             if kind == "withdrawal" and (change >= 0 or method != "barcode"):
                 raise Problem("Withdrawal ledger line is invalid.", 503)
+            if kind == "receiving" and (change <= 0 or method != "barcode" or note != "" or related != ""):
+                raise Problem("Receiving ledger line is invalid.", 503)
             if kind == "adjustment" and (not note or method != "manual"):
                 raise Problem("Adjustments require a reason and manual capture method.", 503)
             try:

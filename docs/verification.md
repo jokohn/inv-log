@@ -56,3 +56,35 @@ After following README setup and approving a reconciled baseline:
 5. Restore test stock through a documented adjustment, not by deleting history. Verify the adjusted formula balances.
 
 Passing simulated tests or showing a receipt in demo mode does not complete these live acceptance checks.
+
+## Receiving implementation — October 15, 2026
+
+Implemented supplier receiving in the existing service, ledger parser, API, and browser interface. `/api/withdrawals` retains its meaning; `/api/receiving` uses the same serialized save/recovery path. Quantities remain positive in requests; only the server derives signed ledger changes. Canonical v2 payloads include direction; historical product-to-quantity maps remain withdrawals without rewriting their stored payload or evidence.
+
+### Current automated evidence
+
+**83 tests passed** on Windows / Python 3.14.3 using `.venv/Scripts/python.exe -m pytest -q --basetemp=artifacts/pytest-receiving-final`. JavaScript syntax and `git diff --check` passed. The existing upstream Starlette test-client deprecation warning remains.
+
+The original 47-test baseline passed before feature edits. The planning import failure was caused by Python 3.12 compiled binaries in a Python 3.14 virtual environment: `pydantic_core` and `_cffi_backend` carried `cp312` filenames. Reinstalling the already-pinned `pydantic_core==2.50.1` and `cffi==2.1.1` with Python 3.14 wheels restored the baseline; requirements were not changed. Tests required execution outside the sandbox because its temporary-directory permissions failed.
+
+Receiving regression coverage includes 10 + 48 = 58, zero stock, deliveries exceeding current stock, consolidation, stale products and whole-basket rejection, invalid quantities, duplicate concurrent requests, opposite-direction and changed-content conflicts, distinct intentional deliveries, shared receiving/withdrawal serialization, capacity expansion, mixed adjustments, literal product text, invalid ledger signs/types, API session/origin checks, journal failure, rejection/retry, timeout before/after commit, crash/restart, unavailable readback, partial history, and changed post-save balances. Seeded actual legacy payload maps and receipts verify pending recovery, original verified receipts after later receiving, and unchanged IDs/payload/evidence/creation timestamps.
+
+### Browser evidence
+
+Real browser interactions used isolated demo state under `artifacts/receiving-browser-verified` (port 8877), plus test-only seeded fixtures under `artifacts/receiving-fixtures` (port 8880). No live credentials or Sheet writes were used for these checks.
+
+- Two scans, plus once, direct entry 7, then another scan produced one line of 8. Reload retained Receive stock, quantity 8, and its draft. Double-clicking Receive stock produced one +8 receipt and 56 on hand from 48. Request: `9541e8d5-0da6-4833-afdb-acb51e4f9123`.
+- Five intentional identical scans produced one line of 5; saving showed +5 and 61 on hand. Request: `a638bb90-7af6-4e11-993e-13e4b6a25bae`.
+- Altered barcode `0780000011` was rejected; exact `000780000011` worked. Capture focus returned after scans. Catalog units remained visible.
+- Mode selection was disabled with basket items. Removal restored an empty basket and enabled switching. Quantity 0 disabled receiving submission with a validation message.
+- Withdrawing 62 from 61 was rejected without a write. Correcting to 1 showed a negative receipt and 60 on hand. Recent activity displayed both signed directions.
+- A seeded old draft without direction restored as Withdraw stock and saved -2. A seeded interrupted receiving request restored the original receiving mode and locked scanning, editing, and mode switching; Check recovery returned +2 and the expected 48 balance without another addition.
+- An explicitly unknown draft direction blocked capture instead of being treated as a withdrawal.
+- Starting with an empty browser draft while the journal held an ambiguously absent receiving save restored that pending basket and receiving mode. Recovery checks and reload kept both modes locked; no success was claimed.
+- No browser JavaScript errors were reported in the inspected console logs. Final browser files were reloaded after the draft-validation edit.
+
+Visual receipt evidence: `artifacts/receiving-receipt.png` (ignored local artifact). Test fixture server source is retained locally at `artifacts/browser_fixture_server.py`; it is not part of the production app.
+
+### Remaining acceptance
+
+Live receiving rows and balances in the original configured Google Sheet, actual Google formula recalculation/capacity expansion, physical D5100 repeated scans, MacBook installation, and performance near the ledger limit remain unverified. Approve a specific prototype delivery and establish exclusive writer access before live acceptance. Preserve receiving history; correct test stock through documented adjustments. Older app builds reject receiving ledger rows and must not be used after the first live receipt.

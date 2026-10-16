@@ -1,5 +1,7 @@
 # Hyatt inventory capture prototype — architecture plan
 
+Follow-on scope: [Inventory receiving implementation handoff](receiving-implementation-plan.md) adds supplier deliveries, including repeated-scan quantity entry. It supersedes this original plan's exclusion of receiving; the original first-build scope and historical evidence below are retained.
+
 Date: October 14, 2026 (America/Chicago)  
 Project: `inv_flow`  
 Status: Agreed direction, documented for implementation. No application, spreadsheet migration, credentials, or Git repository have been created by this planning exercise.

@@ -4,6 +4,8 @@ A local scanner-to-basket inventory prototype built from [the architecture plan]
 
 **Current delivery: runnable demo plus Google integration code and migration tooling.** Demo mode is the default. No Google credentials, real inventory, or live spreadsheet were used or changed during development. See [verification evidence and remaining acceptance checks](docs/verification.md).
 
+**Receiving implemented:** [Inventory receiving implementation plan](docs/receiving-implementation-plan.md) records the supplier-delivery scope and acceptance requirements. Receiving shares the withdrawal save and recovery path. Automated and isolated browser checks are recorded in [verification evidence](docs/verification.md); live receiving and physical-scanner acceptance remain outstanding.
+
 ## Run on the MacBook
 
 Use Python **3.12 or newer**. Python 3.12 was tested on the Windows development machine; installation and scanner behavior on the target MacBook still need verification. Open Terminal in this folder:
@@ -27,12 +29,28 @@ Alternatively, `chmod +x start.command` once enables Finder double-click launch.
 
 ## Try the demo
 
-1. Click **Show demo barcodes**, then click a sample product, or type `000780000011` in Barcode and press Enter.
+1. Choose **Withdraw stock** or **Receive stock** with an empty basket. Click **Show demo barcodes**, then click a sample product, or type `000780000011` in Barcode and press Enter.
 2. Scan the same barcode again to increase the quantity. Edit quantities directly or use the plus/minus buttons; remove a line with ×.
-3. Select **Record withdrawal**. A receipt appears only after transaction rows and new balances have been read back and checked.
+3. Select **Record withdrawal** or **Receive stock**. A receipt appears only after transaction rows and new balances have been read back and checked.
 4. Refresh the page to test draft restoration. Request more units than available to test whole-basket rejection.
 
 Sample barcodes and counts are synthetic demonstration data, not claims about real product UPCs or Hyatt stock. Demo data persists locally in `.state/demo/demo-workbook.json`. It uses the same catalog parser, atomic write builder, validation, and recovery workflow as Google mode through a simulated Google client. It does not prove actual Sheets API behavior.
+
+## Receive a supplier delivery
+
+Choose **Receive stock** before scanning. Existing catalog products only: each exact barcode scan adds one catalog unit to a single consolidated basket line. Scan repeatedly, use plus/minus, or enter a quantity directly; these methods can be combined. The counting unit appears beside each product. Two cases of 24 bottles require **48 bottles**; there is no case conversion or supplier/reference field.
+
+Select **Receive stock** to submit. Receiving adds stock, including when current stock is zero or the delivery exceeds stock on hand. Withdrawals still reject insufficient stock for the entire basket. Confirmation and recent activity show **+** for receiving and **−** for withdrawals, with the resulting stock in the receipt.
+
+Switch modes only with an empty basket and no save or recovery lock. Reload restores the draft's direction. An interrupted save locks both modes until **Check recovery** verifies its exact rows and balances. A scanner beep means capture, not a verified stock change. Never create another request to bypass an unresolved save.
+
+### Upgrade an existing installation
+
+Resolve uncertain submissions and stop the old app before upgrading. Keep its local journal and browser drafts; older records without a movement type are interpreted as withdrawals without rewriting their history. No spreadsheet migration, new column, opening-count reset, or replay is needed for receiving on an existing v1 workbook.
+
+**Older application versions reject receiving rows.** After the first receipt is recorded, do not run an older build against that ledger. Preserve all history and use documented manual adjustments for corrections. Keep one writer active.
+
+If an environment was reused across Python versions and imports fail, recreate the virtual environment for the chosen interpreter and install the pinned requirements. Compiled dependency files from Python 3.12 cannot be reused by Python 3.14.
 
 ## Scanner use
 
@@ -106,24 +124,24 @@ Document the cutover time, backup fingerprint, and product-ID mapping from the s
 
 ## Recovery and corrections
 
-Every submission has a stable UUID saved in the browser before sending and in SQLite before network dispatch. A retry with the same ID and payload cannot append a second copy. A different payload with the same ID is rejected. Every fresh intentional withdrawal receives a new ID.
+Every submission has a stable UUID saved in the browser before sending and in SQLite before network dispatch. A retry with the same ID and payload cannot append a second copy. A different payload with the same ID is rejected. Every fresh intentional withdrawal or delivery receives a new ID. Direction is part of that identity.
 
-An interrupted write locks the basket and pauses all new withdrawals. Select **Check recovery**. If exact rows and expected balances exist, the app returns a verified receipt. If the original HTTP request never reached the journal, the browser may resend exactly the same identity and payload. Once a dispatch is journaled, absent rows do **not** authorize a resend. The app never automatically clears uncertain journal records.
+An interrupted write locks the basket and pauses both receiving and withdrawals. Select **Check recovery**. If exact rows and expected balances exist, the app returns a verified receipt. If the original HTTP request never reached the journal, the browser may resend exactly the same identity and payload. Once a dispatch is journaled, absent rows do **not** authorize a resend. The app never automatically clears uncertain journal records.
 
 For unresolved/partial/mismatched results, stop capture and reconcile the original Sheet and local journal on the original device. Keep the journal and evidence. Do not switch state directories, reset IDs, delete rows, or move to another laptop to get around the pause. This release deliberately has no "force retry" or "mark failed" button; ambiguous absence requires a reviewed reconciliation procedure.
 
-Corrections are append-only controlled `adjustment` rows: unique Request ID, contiguous Line Number beginning at 1, valid Product ID and snapshot unit, signed nonzero integer Unit Change, explicit UTC timestamp, device label, `manual` Capture Method, `adjustment` Transaction Type, and a required Note. Optional Related Request ID links the original withdrawal. No receiving or adjustment UI is included. Perform manual adjustments only while the app is stopped and no submission is unresolved; verify balances before reopening.
+Corrections are append-only controlled `adjustment` rows: unique Request ID, contiguous Line Number beginning at 1, valid Product ID and snapshot unit, signed nonzero integer Unit Change, explicit UTC timestamp, device label, `manual` Capture Method, `adjustment` Transaction Type, and a required Note. Optional Related Request ID links the original stock movement. No adjustment UI is included. Perform manual adjustments only while the app is stopped and no submission is unresolved; verify balances before reopening.
 
 ## Schema and limits
 
 - `Inventory_v1`: Product ID, Product Name, Unit Size, UPC, Opening Count, Current Count.
 - `Transactions_v1`: Request ID, Line Number, Product ID, Product Name, Unit Size, UPC, Unit Change, Change Datetime, Changing Device, Capture Method, Transaction Type, Note, Related Request ID.
 - `InvFlow_v1`: key/value metadata including `schema_version` = text `1` and `counting_model` = `whole_catalog_units`.
-- Formula coverage starts at 1,000 ledger rows and expands by 1,000 rows in the same atomic batch as the withdrawal. Hard limit: 100,000 transaction rows and 200 products per basket. Every populated ledger row is read; blank gaps do not terminate history.
+- Formula coverage starts at 1,000 ledger rows and expands by 1,000 rows in the same atomic batch as the stock movement. Hard limit: 100,000 transaction rows and 200 products per basket. Every populated ledger row is read; blank gaps do not terminate history.
 - Unit Size is a literal catalog counting unit, not a conversion rule. Fractional quantities, cases-to-bottles conversion, and unit changes to products with history are unsupported.
 - The launcher binds only to loopback, runs one worker, locks its state directory, validates Host/Origin, and requires a session token on mutations. No LAN or cloud hosting.
 - Different computers/state directories bypass the lock. Google batch atomicity does not make the preceding read/check/write transactional against outside editors.
-- No BirchStreet connection, staff authentication, offline saving, automatic receipts export, or stock receiving screen.
+- No BirchStreet connection, staff authentication, offline saving, automatic receipts export.
 
 ## Development and verification
 
@@ -131,6 +149,6 @@ Corrections are append-only controlled `adjustment` rows: unique Request ID, con
 python -m pytest -q
 ```
 
-Tests inject failures at the Google client boundary and exercise real application parsing, writing, and recovery. Pinned dependencies include test tooling. No CI or installer packaging is included. Backend tests were run on Windows/Python 3.12; see the evidence file for browser checks and unverified live acceptance requirements.
+Tests inject failures at the Google client boundary and exercise real application parsing, writing, and recovery. Pinned dependencies include test tooling. No CI or installer packaging is included. Backend tests were most recently run on Windows/Python 3.14; see the evidence file for browser checks and unverified live acceptance requirements.
 
 Google references: [atomic batch updates](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/batchUpdate), [typed cell update requests](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request#UpdateCellsRequest).
