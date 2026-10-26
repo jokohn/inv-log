@@ -16,6 +16,8 @@ class Config:
     inventory_tab: str = "Inventory_v1"
     transactions_tab: str = "Transactions_v1"
     metadata_tab: str = "InvFlow_v1"
+    openai_api_key: str = ""
+    voice_model: str = "gpt-6.1-sol"
 
     @property
     def identity(self):

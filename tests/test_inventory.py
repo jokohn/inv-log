@@ -25,6 +25,127 @@ def request(quantity=1, rid=None, pid="sapporo"):
     return {"request_id": rid or str(uuid4()), "lines": [{"product_id":pid, "quantity":quantity}]}
 
 
+def staged_request():
+    req = request(2)
+    req.update(new_products=[dict(id="new-drink", name='=IMPORTDATA("literal")', unit="12 oz bottle", upc="001234567890")],
+               capture={"sapporo":"mixed", "new-drink":"barcode"})
+    req["lines"].append(dict(product_id="new-drink", quantity=5))
+    return req
+
+
+def test_new_receiving_atomic_literal_identity_and_attribution(system):
+    inv, provider, _ = system
+    req = staged_request()
+    first = inv.submit(req, "receiving")
+    snapshot = inv.sheets.read()
+    assert snapshot.products["new-drink"]["opening"] == 0
+    assert snapshot.products["new-drink"]["count"] == 5
+    assert snapshot.products["new-drink"]["upc"] == "001234567890"
+    assert {r[2]:r[9] for r in snapshot.ledger} == req["capture"]
+    assert inv.submit(req, "receiving") == first and provider.write_count == 1
+    import copy
+    for field in ("name", "unit", "upc"):
+        changed = copy.deepcopy(req); changed["new_products"][0][field] += "1"
+        with pytest.raises(Problem, match="different basket"): inv.submit(changed, "receiving")
+    changed = copy.deepcopy(req); changed["capture"]["sapporo"] = "voice"
+    with pytest.raises(Problem, match="different basket"): inv.submit(changed, "receiving")
+
+
+@pytest.mark.parametrize("fault", ["reject", "timeout_before", "timeout_after", "crash_after"])
+def test_new_receiving_restart_faults(system, fault, monkeypatch):
+    inv, provider, cfg = system
+    req = staged_request()
+    if fault == "crash_after":
+        write = inv.sheets.write
+        def crash(*args):
+            write(*args)
+            raise KeyboardInterrupt()
+        monkeypatch.setattr(inv.sheets, "write", crash)
+        exception = KeyboardInterrupt
+    else:
+        provider.fault = fault
+        exception = Problem
+    with pytest.raises(exception): inv.submit(req, "receiving")
+    provider.fault = None
+    restarted = Inventory(Sheets(provider, cfg), Journal(inv.journal.path, cfg.identity), cfg)
+    restarted.recover()
+    if fault == "timeout_before":
+        assert restarted.pending() and provider.write_count == 0
+        assert restarted.pending()[0]["new_products"] == req["new_products"]
+        assert restarted.pending()[0]["capture"] == req["capture"]
+        with pytest.raises(Problem, match="paused"): restarted.submit(request())
+    else:
+        assert not restarted.pending()
+        assert restarted.submit(req, "receiving")["total_units"] == 7
+        assert provider.write_count == 1
+
+
+@pytest.mark.parametrize("damage", ["catalog_only", "ledger_only", "metadata", "formula", "balance"])
+def test_new_receiving_incomplete_evidence_never_recovers(system, damage):
+    inv, provider, cfg = system
+    req = staged_request(); provider.fault = "timeout_after"
+    with pytest.raises(Problem): inv.submit(req, "receiving")
+    provider.fault = None
+    inv_grid = provider.data["sheets"][0]["data"][0]["rowData"]
+    ledger = provider.data["sheets"][1]["data"][0]["rowData"]
+    if damage == "catalog_only": del ledger[1:]
+    if damage == "ledger_only": inv_grid.pop()
+    if damage == "metadata": inv_grid[-1]["values"][1] = cell("changed name")
+    if damage == "formula": inv_grid[-1]["values"][5] = cell(5)
+    if damage == "balance": inv_grid[-1]["values"][4] = cell(1)
+    restarted = Inventory(Sheets(provider, cfg), Journal(inv.journal.path, cfg.identity), cfg)
+    assert restarted.recover() and provider.write_count == 1
+    assert restarted.journal.get(req["request_id"])["receipt"] is None
+
+
+@pytest.mark.parametrize("mutation", ["withdrawal", "upc_collision", "id_collision", "unreferenced", "missing_field", "bad_label", "duplicate_upc", "fraction"])
+def test_staged_invalid_never_dispatches(system, mutation):
+    inv, provider, _ = system
+    req = staged_request(); kind = "receiving"
+    if mutation == "withdrawal": kind = "withdrawal"
+    if mutation == "upc_collision": req["new_products"][0]["upc"] = "000780000011"
+    if mutation == "id_collision": req["new_products"][0]["id"] = "sapporo"
+    if mutation == "unreferenced": req["new_products"][0]["id"] = "orphan"
+    if mutation == "missing_field": req["new_products"][0]["unit"] = ""
+    if mutation == "bad_label": req["capture"]["new-drink"] = "model said saved"
+    if mutation == "duplicate_upc": req["new_products"].append(dict(req["new_products"][0], id="other"))
+    if mutation == "fraction": req["lines"][0]["quantity"] = 1.5
+    with pytest.raises(Problem): inv.submit(req, kind)
+    assert provider.write_count == 0 and not inv.pending()
+
+
+@pytest.mark.parametrize("count", [60, 200])
+def test_staged_capacity_and_representative_baskets(system, count):
+    inv, provider, _ = system
+    provider.data = workbook(inv.config, capacity=2)
+    provider.data["sheets"][0]["properties"]["gridProperties"]["rowCount"] = 7
+    req = dict(request_id=str(uuid4()), lines=[dict(product_id=f"new-{n}", quantity=1000000) for n in range(count)],
+        new_products=[dict(id=f"new-{n}", name=f"Drink {n}", unit="bottle", upc=f"{n:012d}") for n in range(count)],
+        capture={f"new-{n}":"voice" for n in range(count)})
+    assert inv.submit(req, "receiving")["total_units"] == count * 1000000
+    snapshot = inv.sheets.read()
+    assert len(snapshot.products) == count + 6 and snapshot.capacity > count
+    assert provider.write_count == 1
+
+
+def test_new_catalog_changed_after_verified_receipt_locks(system):
+    inv, provider, _ = system
+    req = staged_request(); inv.submit(req, "receiving")
+    provider.data["sheets"][0]["data"][0]["rowData"][-1]["values"][1] = cell("Changed")
+    with pytest.raises(Problem): inv.submit(req, "receiving")
+    assert inv.pending()
+
+
+def test_new_inventory_capacity_rejection_before_intent(system):
+    inv, provider, _ = system
+    snapshot = inv.sheets.read()
+    snapshot.inventory_next_row = 100001
+    inv.sheets.read = lambda: snapshot
+    req = staged_request()
+    with pytest.raises(Problem, match="capacity"): inv.submit(req, "receiving")
+    assert provider.write_count == 0 and inv.journal.get(req["request_id"]) is None
+
+
 def test_verified_save_repeat_and_intentional_new_request(system):
     inv, provider, _ = system
     req = request(3)

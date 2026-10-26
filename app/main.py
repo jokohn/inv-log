@@ -9,15 +9,17 @@ from filelock import FileLock, Timeout
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import Config
+from .capture import CaptureAssistance
 from .demo import DemoService
 from .inventory import Inventory
 from .recovery import Journal
 from .sheets import Problem, Sheets, google_service, connection_error
 
 
-def create_app(config=None, service=None):
+def create_app(config=None, service=None, capture=None):
     cfg = config or Config.load()
     token = secrets.token_urlsafe(32)
+    assistance = capture or CaptureAssistance(cfg)
     state = cfg.state_dir / cfg.mode
     state.mkdir(parents=True, exist_ok=True)
     instance_lock = FileLock(state / "instance.lock")
@@ -67,7 +69,8 @@ def create_app(config=None, service=None):
     @app.get("/api/status")
     def status(request: Request, request_id: str = ""):
         inv = request.app.state.inventory
-        base = dict(mode=cfg.mode, identity=cfg.identity, device=cfg.device, token=token)
+        base = dict(mode=cfg.mode, identity=cfg.identity, device=cfg.device, token=token,
+                    voice_available=bool(cfg.openai_api_key))
         try:
             base.update(inv.status())
             base["connected"] = True
@@ -91,6 +94,21 @@ def create_app(config=None, service=None):
     @app.post("/api/receiving")
     def receive(request: Request, body: dict):
         return request.app.state.inventory.submit(body, "receiving")
+
+    async def capture_catalog(request):
+        from starlette.concurrency import run_in_threadpool
+        status = await run_in_threadpool(request.app.state.inventory.status)
+        if status["pending"]:
+            raise Problem("Capture paused until recovery is verified.", 409)
+        return {p["id"]: p for p in status["products"]}
+
+    @app.post("/api/capture/lookup")
+    async def lookup(request: Request, body: dict):
+        return await assistance.lookup(body, await capture_catalog(request))
+
+    @app.post("/api/capture/voice")
+    async def voice(request: Request, body: dict):
+        return await assistance.interpret(body, await capture_catalog(request))
 
     static = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static), name="static")

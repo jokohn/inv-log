@@ -152,3 +152,21 @@ python -m pytest -q
 Tests inject failures at the Google client boundary and exercise real application parsing, writing, and recovery. Pinned dependencies include test tooling. No CI or installer packaging is included. Backend tests were most recently run on Windows/Python 3.14; see the evidence file for browser checks and unverified live acceptance requirements.
 
 Google references: [atomic batch updates](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/batchUpdate), [typed cell update requests](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request#UpdateCellsRequest).
+## Pre-demo capture additions (October 25, 2026)
+
+Receiving now supports unfamiliar scanned barcodes. Scan in **Receive stock**: UPCitemdb Explorer can fill editable product name/unit fields. No match, missing data, quota or a five-second lookup timeout leaves a manual draft. Complete both fields, review the catalog counting unit and quantity, then submit. Repeat scans increment the same staged line. Unknown withdrawals still reject. New inventory rows start with zero opening count; the receiving transaction supplies their quantity once. New catalog rows, balance formulas and transaction rows share one atomic batch and the existing verification/recovery journal.
+
+The **Voice command** card uses the browser's speech recognition and server-side OpenAI interpretation. Start recording, speak, and finish recording. Supported commands add/increment, set quantities, remove a line or cancel the draft. Clarification holds the entire command until answered or discarded. Basket edits remain available while interpretation runs; an intervening edit discards its response. Submit waits for recording, interpretation and clarification to end and requires a fresh click. Refresh retains the basket and staged products and discards unfinished voice work with a notice. Voice never saves stock.
+
+To enable voice, create/select an OpenAI API project, enable its API billing if needed, and create a project API key yourself. Add it **only to the local server's ignored `.env`**:
+
+```dotenv
+INV_OPENAI_API_KEY=your-project-key
+INV_VOICE_MODEL=gpt-6.1-sol
+```
+
+Restart the app. Do not paste the key into chat or commit it. ChatGPT subscription access does not establish API project access. Without a key or supported browser, the microphone explains its unavailability and barcode/manual capture stays usable. Browser recognition may use its browser vendor's online speech service; verify permissions and recognition on the demo laptop. Unknown barcode lookup sends only that barcode to UPCitemdb. Interpretation sends the completed text, selected direction, draft context and complete compact catalog to OpenAI; credentials stay on the server. No provider image/link URLs are fetched. Calls are bounded, are never automatically retried, and do not hold the inventory writer lock. Interpretation times out after 30 seconds. Oversized full context disables voice rather than truncating the catalog.
+
+For setup and rehearsal, see [the pre-demo runbook](docs/pre-demo-runbook.md). The offline suite and browser fixtures establish implementation behavior, not live provider quality or target-device acceptance. User requested offline verification for this run; no live model calls or billing occurred.
+
+**Compatibility:** historical map/v2 payloads and immutable saved receipts remain supported. New payloads include staged metadata and per-product barcode/voice/mixed capture labels in request identity. Updated readers accept those ledger labels. An old binary rejects voice/mixed history; do not use it as a transparent rollback. Keep the original state directory with its workbook, and never clear unresolved journal entries to retry a save.

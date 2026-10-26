@@ -93,6 +93,8 @@ class Snapshot:
     transactions_id: int
     capacity: int
     next_row: int
+    inventory_capacity: int = 100
+    inventory_next_row: int = 1
 
 
 class Sheets:
@@ -181,9 +183,9 @@ class Sheets:
             change = integer(change, "Unit change")
             if kind not in {"withdrawal", "receiving", "adjustment"} or change == 0:
                 raise Problem("Invalid transaction type or zero unit change.", 503)
-            if kind == "withdrawal" and (change >= 0 or method != "barcode"):
+            if kind == "withdrawal" and (change >= 0 or method not in {"barcode", "voice", "mixed"}):
                 raise Problem("Withdrawal ledger line is invalid.", 503)
-            if kind == "receiving" and (change <= 0 or method != "barcode" or note != "" or related != ""):
+            if kind == "receiving" and (change <= 0 or method not in {"barcode", "voice", "mixed"} or note != "" or related != ""):
                 raise Problem("Receiving ledger line is invalid.", 503)
             if kind == "adjustment" and (not note or method != "manual"):
                 raise Problem("Adjustments require a reason and manual capture method.", 503)
@@ -202,13 +204,22 @@ class Sheets:
             if product["count"] != totals[pid]:
                 raise Problem(f"Calculated balance disagrees with ledger for {product['name']}.", 503)
         return Snapshot(products, records, by_title[cfg.inventory_tab]["sheetId"],
-                        by_title[cfg.transactions_tab]["sheetId"], capacity, last_row)
+                        by_title[cfg.transactions_tab]["sheetId"], capacity, last_row,
+                        by_title[cfg.inventory_tab]["gridProperties"]["rowCount"], max(p["row"] for p in products.values()))
 
-    def write(self, snapshot, rows):
+    @staticmethod
+    def check_capacity(snapshot, rows, staged):
+        if snapshot.next_row + len(rows) > MAX_ROWS or snapshot.inventory_next_row + len(staged) > MAX_ROWS:
+            raise Problem("Workbook capacity reached. Reconcile and migrate before continuing.")
+
+    def write(self, snapshot, rows, staged=None):
+        staged = staged or {}
+        self.check_capacity(snapshot, rows, staged)
         end = snapshot.next_row + len(rows)
         if end > MAX_ROWS:
             raise DefinitiveRejection("Transaction capacity reached. Reconcile and migrate before continuing.")
         requests = []
+        capacity = snapshot.capacity
         if end > snapshot.capacity:
             capacity = min(MAX_ROWS, max(end, snapshot.capacity + 1000))
             requests.append({"appendDimension": {"sheetId": snapshot.transactions_id, "dimension": "ROWS",
@@ -217,6 +228,18 @@ class Sheets:
                 requests.append({"updateCells": {"start": {"sheetId": snapshot.inventory_id,
                     "rowIndex": p["row"] - 1, "columnIndex": 5}, "rows": [{"values": [{"userEnteredValue": {
                     "formulaValue": formula(p["row"], capacity, self.config.transactions_tab)}}]}], "fields": "userEnteredValue"}})
+        inventory_end = snapshot.inventory_next_row + len(staged)
+        if inventory_end > snapshot.inventory_capacity:
+            requests.append({"appendDimension": {"sheetId": snapshot.inventory_id, "dimension": "ROWS",
+                "length": min(MAX_ROWS, max(inventory_end, snapshot.inventory_capacity + 100)) - snapshot.inventory_capacity}})
+        if staged:
+            catalog_rows = []
+            for row_number, p in enumerate((staged[k] for k in sorted(staged)), snapshot.inventory_next_row + 1):
+                values = typed_rows([[p["id"], p["name"], p["unit"], p["upc"], 0]])[0]
+                values["values"].append({"userEnteredValue": {"formulaValue": formula(row_number, capacity, self.config.transactions_tab)}})
+                catalog_rows.append(values)
+            requests.append({"updateCells": {"start": {"sheetId": snapshot.inventory_id,
+                "rowIndex": snapshot.inventory_next_row, "columnIndex": 0}, "rows": catalog_rows, "fields": "userEnteredValue"}})
         requests.append({"updateCells": {"start": {"sheetId": snapshot.transactions_id,
             "rowIndex": snapshot.next_row, "columnIndex": 0}, "rows": typed_rows(rows), "fields": "userEnteredValue"}})
         try:
